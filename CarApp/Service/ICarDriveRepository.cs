@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using CarApp.Helper;
 using CarApp.Models;
 
 namespace CarApp.Service
@@ -13,8 +14,7 @@ namespace CarApp.Service
         Task<(CarDriveHeader Header, List<CarDriveDtList> Details)> GetCarDriveById(string carDrId);
         Task DeleteCarDrive(string carDrId);
         
-    // ... existing methods ...
-        Task<List<CarDriveSearchResult>> SearchCarDrivesFull(string? carId = null, string? assetId = null, string? invoiceNo = null, string? driveNote = null);
+        Task<PaginatedResult<CarDriveSearchResult>> SearchCarDrivesFull(QueryObject queryObject);
 
     }
 }

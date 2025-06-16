@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using CarApp.Helper;
 using CarApp.Models;
 using CarApp.Service;
 using Microsoft.AspNetCore.Mvc;
@@ -25,7 +26,13 @@ namespace CarApp.Controller
             try
             {
                 await _repository.InsertCarDriveWithDetails(request.Header, request.Details);
-                return Ok(new { message = "Car Drive record inserted successfully" });
+                return Ok(new { 
+                    message = "Car Drive record inserted successfully",
+                    data = new {
+                        header = request.Header,
+                        details = request.Details
+                    }
+                });
             }
             catch (Exception ex)
             {
@@ -39,7 +46,16 @@ namespace CarApp.Controller
             try
             {
                 await _repository.UpdateCarDriveWithDetails(request.Header, request.Details);
-                return Ok(new { message = "Car Drive record updated successfully" });
+                return Ok(new
+                {
+                    message = "Car Drive record updated successfully",
+                    data = new
+                    {
+                        header = request.Header,
+                        details = request.Details
+                    }
+                });
+                
             }
             catch (Exception ex)
             {
@@ -79,16 +95,21 @@ namespace CarApp.Controller
         }
 
         [HttpGet("search-full")]
-        public async Task<IActionResult> SearchCarDrivesFull(
-            [FromQuery] string? carId = null,
-            [FromQuery] string? assetId = null,
-            [FromQuery] string? invoiceNo = null,
-            [FromQuery] string? driveNote = null)
+        public async Task<IActionResult> SearchCarDrivesFull([FromQuery] QueryObject query)
         {
             try
             {
-                var results = await _repository.SearchCarDrivesFull(carId, assetId, invoiceNo, driveNote);
-                return Ok(results);
+                var result = await _repository.SearchCarDrivesFull(query);
+                return Ok(new
+                {
+                    items = result.Items,
+                    pageNumber = result.PageNumber,
+                    pageSize = result.PageSize,
+                    totalCount = result.TotalCount,
+                    totalPages = result.TotalPages,
+                    hasPreviousPage = result.HasPreviousPage,
+                    hasNextPage = result.HasNextPage
+                });
             }
             catch (Exception ex)
             {

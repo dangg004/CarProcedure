@@ -85,3 +85,5 @@ D:\source\repos\CarProcedure\CarApp\obj\Debug\net9.0\refint\CarApp.dll
 D:\source\repos\CarProcedure\CarApp\obj\Debug\net9.0\CarApp.pdb
 D:\source\repos\CarProcedure\CarApp\obj\Debug\net9.0\CarApp.genruntimeconfig.cache
 D:\source\repos\CarProcedure\CarApp\obj\Debug\net9.0\ref\CarApp.dll
+D:\source\repos\CarProcedure\CarApp\obj\Debug\net9.0\CarApp.sourcelink.json
+D:\source\repos\CarProcedure\CarApp\bin\Debug\net9.0\Dapper.dll
