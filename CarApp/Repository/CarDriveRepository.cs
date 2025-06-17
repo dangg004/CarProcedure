@@ -2,6 +2,7 @@ using System;
 using Dapper;
 using System.Collections.Generic;
 using System.Data;
+using System.Text.Json;
 using System.Linq;
 using System.Threading.Tasks;
 using CarApp.Data;
@@ -16,12 +17,10 @@ namespace CarApp.Repository
 {
     public class CarDriveRepository : ICarDriveRepository
     {
-        private readonly ApplicationDbContext _context;
         private readonly string _connectionString;
 
         public CarDriveRepository(ApplicationDbContext context)
         {
-            _context = context;
             _connectionString = context.Database.GetConnectionString();
         }
 
@@ -34,42 +33,67 @@ namespace CarApp.Repository
                 commandType: CommandType.StoredProcedure);
         }
 
-        public async Task InsertCarDriveWithDetails(CarDriveHeader header, List<CarDriveDtList> details)
+        private async Task ExecuteStoredProcedureWithTVP(string procedureName, object parameters, string tvpName, DataTable tvpData)
         {
             using var connection = new SqlConnection(_connectionString);
-            var parameters = new DynamicParameters(header);
-            parameters.Add("@DT_List", CreateDetailTable(details).AsTableValuedParameter("CAR_DRIVE_DT_List"));
+            var dynamicParams = new DynamicParameters(parameters);
+            dynamicParams.Add("@DT_List", tvpData.AsTableValuedParameter(tvpName));
 
             await connection.ExecuteAsync(
-                "sp_CAR_DRIVE_InsertFull",
+                procedureName,
+                dynamicParams,
+                commandType: CommandType.StoredProcedure);
+        }
+
+        private async Task<(T1 First, List<T2> Second)> ExecuteStoredProcedureMultiResult<T1, T2>(
+            string procedureName, 
+            object parameters)
+        {
+            using var connection = new SqlConnection(_connectionString);
+            using var multi = await connection.QueryMultipleAsync(
+                procedureName,
                 parameters,
                 commandType: CommandType.StoredProcedure);
+
+            var first = await multi.ReadFirstOrDefaultAsync<T1>();
+            var second = (await multi.ReadAsync<T2>()).ToList();
+
+            return (first, second);
+        }
+
+        public async Task InsertCarDriveWithDetails(CarDriveHeader header, List<CarDriveDtList> details)
+        {
+            var jsonData = new
+            {
+                Header = header,
+                Details = details
+            };
+
+            await ExecuteStoredProcedure<int>(
+                "sp_CAR_DRIVE_InsertFull",
+                new { JsonData = JsonSerializer.Serialize(jsonData) });
         }
 
         public async Task UpdateCarDriveWithDetails(CarDriveHeader header, List<CarDriveDtList> details)
         {
-            using var connection = new SqlConnection(_connectionString);
-            var parameters = new DynamicParameters(header);
-            parameters.Add("@DT_List", CreateDetailTable(details).AsTableValuedParameter("CAR_DRIVE_DT_List"));
+            var jsonData = new
+            {
+                Header = header,
+                Details = details
+            };
 
-            await connection.ExecuteAsync(
+            await ExecuteStoredProcedure<int>(
                 "sp_CAR_DRIVE_UpdateFull",
-                parameters,
-                commandType: CommandType.StoredProcedure);
+                new { JsonData = JsonSerializer.Serialize(jsonData) });
         }
 
         public async Task<(CarDriveHeader Header, List<CarDriveDtList> Details)> GetCarDriveById(string carDrId)
         {
-            using var connection = new SqlConnection(_connectionString);
-            using var multi = await connection.QueryMultipleAsync(
+            var result = await ExecuteStoredProcedureMultiResult<CarDriveHeader, CarDriveDtList>(
                 "sp_CAR_DRIVE_GetById",
-                new { CAR_DR_ID = carDrId },
-                commandType: CommandType.StoredProcedure);
+                new { CAR_DR_ID = carDrId });
 
-            var header = await multi.ReadFirstOrDefaultAsync<CarDriveHeader>();
-            var details = (await multi.ReadAsync<CarDriveDtList>()).ToList();
-
-            return (header, details);
+            return (result.First, result.Second);
         }
 
         public async Task DeleteCarDrive(string carDrId)
@@ -81,29 +105,25 @@ namespace CarApp.Repository
 
         public async Task<PaginatedResult<CarDriveSearchResult>> SearchCarDrivesFull(QueryObject queryObject)
         {
-            using var connection = new SqlConnection(_connectionString);
-            using var multi = await connection.QueryMultipleAsync(
+            var jsonParams = JsonSerializer.Serialize(new
+            {
+                queryObject.carId,
+                queryObject.assetId,
+                queryObject.invoiceNo,
+                queryObject.driveNote,
+                pageNumber = queryObject.PageNumber,
+                pageSize = queryObject.PageSize
+            });
+            var result = await ExecuteStoredProcedureMultiResult<int, CarDriveSearchResult>(
                 "sp_CAR_DRIVE_SearchFull",
-                new
-                {
-                    queryObject.carId,
-                    queryObject.assetId,
-                    queryObject.invoiceNo,
-                    queryObject.driveNote,
-                    queryObject.PageNumber,
-                    queryObject.PageSize
-                },
-                commandType: CommandType.StoredProcedure);
-
-            var totalCount = await multi.ReadFirstAsync<int>();
-            var results = await multi.ReadAsync<CarDriveSearchResult>();
+                new { SearchParams = jsonParams });
 
             return new PaginatedResult<CarDriveSearchResult>
             {
-                Items = results.ToList(),
+                Items = result.Second,
                 PageNumber = queryObject.PageNumber,
                 PageSize = queryObject.PageSize,
-                TotalCount = totalCount
+                TotalCount = result.First
             };
         }
 
