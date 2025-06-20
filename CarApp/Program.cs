@@ -10,7 +10,7 @@ builder.Services.AddControllers();
 
 builder.Services.AddStackExchangeRedisCache(options =>
 {
-    options.Configuration = "localhost:6379"; // Change if Redis is on another host
+    options.Configuration = builder.Configuration.GetConnectionString("Redis"); // Change if Redis is on another host
     options.InstanceName = "MyAppCache:"; // Prefix for keys (optional)
 });
 
