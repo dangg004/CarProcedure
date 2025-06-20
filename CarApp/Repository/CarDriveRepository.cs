@@ -73,11 +73,12 @@ namespace CarApp.Repository
             }
         }
 
-        public CarDriveRepository(ApplicationDbContext context, IDistributedCache cache)
+        public CarDriveRepository(ApplicationDbContext context, IDistributedCache cache, ILogger<CarDriveRepository> logger)
         {
             _connectionString = context.Database.GetConnectionString();
             _cache = cache;
             _context = context;
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         private async Task<T> ExecuteStoredProcedure<T>(string procedureName, object parameters)
@@ -170,6 +171,7 @@ namespace CarApp.Repository
             if (!string.IsNullOrEmpty(cached))
             {
                 var cachedData = JsonSerializer.Deserialize<CachedCarDrive>(cached);
+                _logger.LogInformation($"Cache HIT: {cached}");
                 return (cachedData.Header, cachedData.Details);
             }
             var result = await ExecuteStoredProcedureMultiResult<CarDriveHeader, CarDriveDtList>(
@@ -225,6 +227,7 @@ namespace CarApp.Repository
             var cached = await _cache.GetStringAsync(cacheKey);
             if (!string.IsNullOrEmpty(cached))
             {
+                _logger.LogInformation($"Cache HIT: {cached}");
                 return JsonSerializer.Deserialize<PaginatedResult<CarDriveSearchResult>>(cached);
             }
             var jsonParams = JsonSerializer.Serialize(new
