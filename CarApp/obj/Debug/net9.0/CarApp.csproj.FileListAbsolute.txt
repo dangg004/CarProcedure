@@ -87,3 +87,7 @@ D:\source\repos\CarProcedure\CarApp\obj\Debug\net9.0\CarApp.genruntimeconfig.cac
 D:\source\repos\CarProcedure\CarApp\obj\Debug\net9.0\ref\CarApp.dll
 D:\source\repos\CarProcedure\CarApp\obj\Debug\net9.0\CarApp.sourcelink.json
 D:\source\repos\CarProcedure\CarApp\bin\Debug\net9.0\Dapper.dll
+D:\source\repos\CarProcedure\CarApp\bin\Debug\net9.0\Microsoft.Extensions.Caching.StackExchangeRedis.dll
+D:\source\repos\CarProcedure\CarApp\bin\Debug\net9.0\Pipelines.Sockets.Unofficial.dll
+D:\source\repos\CarProcedure\CarApp\bin\Debug\net9.0\StackExchange.Redis.dll
+D:\source\repos\CarProcedure\CarApp\bin\Debug\net9.0\Microsoft.Extensions.Caching.SqlServer.dll

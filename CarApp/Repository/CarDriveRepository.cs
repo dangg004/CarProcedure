@@ -12,16 +12,72 @@ using CarApp.Service;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Distributed;
 
 namespace CarApp.Repository
 {
     public class CarDriveRepository : ICarDriveRepository
     {
+        private const string CACHE_KEY_PREFIX = "carDrive:";
         private readonly string _connectionString;
+        private readonly ApplicationDbContext _context;
+        private readonly IDistributedCache _cache;
+        private readonly ILogger<CarDriveRepository> _logger;
 
-        public CarDriveRepository(ApplicationDbContext context)
+        // Cache key generators
+        private string GenerateCacheKey(string id)
+        {
+            if (string.IsNullOrEmpty(id))
+            {
+                _logger.LogWarning("Attempted to generate cache key with null or empty id");
+                return string.Empty;
+            }
+            return $"{CACHE_KEY_PREFIX}entity:{id}";
+        }
+
+        private string GenerateSearchCacheKey(QueryObject query)
+        {
+            if (query == null)
+            {
+                _logger.LogWarning("Attempted to generate search cache key with null query");
+                return string.Empty;
+            }
+
+            return $"{CACHE_KEY_PREFIX}list:{query.carId}:{query.assetId}:{query.invoiceNo}:{query.driveNote}:{query.PageNumber}:{query.PageSize}";
+        }
+
+        private async Task InvalidateSearchCache()
+        {
+            var searchKeysKey = $"{CACHE_KEY_PREFIX}activeSearchKeys";
+            var activeKeys = await _cache.GetStringAsync(searchKeysKey);
+            if (!string.IsNullOrEmpty(activeKeys))
+            {
+                var keys = JsonSerializer.Deserialize<List<string>>(activeKeys);
+                foreach (var key in keys)
+                {
+                    await _cache.RemoveAsync(key);
+                }
+            }
+            await _cache.RemoveAsync(searchKeysKey);
+        }
+
+        private async Task AddSearchCacheKey(string cacheKey)
+        {
+            var searchKeysKey = $"{CACHE_KEY_PREFIX}activeSearchKeys";
+            var activeKeys = await _cache.GetStringAsync(searchKeysKey);
+            var keys = string.IsNullOrEmpty(activeKeys) ? new List<string>() : JsonSerializer.Deserialize<List<string>>(activeKeys);
+            if (!keys.Contains(cacheKey))
+            {
+                keys.Add(cacheKey);
+                await _cache.SetStringAsync(searchKeysKey, JsonSerializer.Serialize(keys));
+            }
+        }
+
+        public CarDriveRepository(ApplicationDbContext context, IDistributedCache cache)
         {
             _connectionString = context.Database.GetConnectionString();
+            _cache = cache;
+            _context = context;
         }
 
         private async Task<T> ExecuteStoredProcedure<T>(string procedureName, object parameters)
@@ -72,10 +128,20 @@ namespace CarApp.Repository
             await ExecuteStoredProcedure<int>(
                 "sp_CAR_DRIVE_InsertFull",
                 new { JsonData = JsonSerializer.Serialize(jsonData) });
+
+            await InvalidateSearchCache();
         }
 
         public async Task UpdateCarDriveWithDetails(CarDriveHeader header, List<CarDriveDtList> details)
         {
+            var result = await ExecuteStoredProcedureMultiResult<CarDriveHeader, CarDriveDtList>(
+                "sp_CAR_DRIVE_GetById",
+                new { CAR_DR_ID = header.CAR_DR_ID });
+
+            if (result.First == null)
+            {
+                throw new Exception($"Car Drive with ID {header.CAR_DR_ID} does not exist.");
+            }
             var jsonData = new
             {
                 Header = header,
@@ -85,26 +151,82 @@ namespace CarApp.Repository
             await ExecuteStoredProcedure<int>(
                 "sp_CAR_DRIVE_UpdateFull",
                 new { JsonData = JsonSerializer.Serialize(jsonData) });
+
+            
+            if (!string.IsNullOrEmpty(header.CAR_DR_ID))
+            {
+                var entityCacheKey = GenerateCacheKey(header.CAR_DR_ID);
+                await _cache.RemoveAsync(entityCacheKey);
+
+                // Also invalidate any search results
+                await InvalidateSearchCache();
+            }
         }
 
         public async Task<(CarDriveHeader Header, List<CarDriveDtList> Details)> GetCarDriveById(string carDrId)
         {
+            var cacheKey = GenerateCacheKey(carDrId);
+            var cached = await _cache.GetStringAsync(cacheKey);
+            if (!string.IsNullOrEmpty(cached))
+            {
+                var cachedData = JsonSerializer.Deserialize<CachedCarDrive>(cached);
+                return (cachedData.Header, cachedData.Details);
+            }
             var result = await ExecuteStoredProcedureMultiResult<CarDriveHeader, CarDriveDtList>(
                 "sp_CAR_DRIVE_GetById",
                 new { CAR_DR_ID = carDrId });
 
+            if (result.First != null)
+            {
+                var cacheEntry = new CachedCarDrive
+                {
+                    Header = result.First,
+                    Details = result.Second
+                };
+
+                var cacheOptions = new DistributedCacheEntryOptions
+                {
+                    AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(30),
+                    SlidingExpiration = TimeSpan.FromMinutes(10)
+                };
+
+                await _cache.SetStringAsync(
+                    cacheKey,
+                    JsonSerializer.Serialize(cacheEntry),
+                    cacheOptions
+                );
+            }
             return (result.First, result.Second);
         }
 
         public async Task DeleteCarDrive(string carDrId)
         {
+
             await ExecuteStoredProcedure<int>(
                 "sp_CAR_DRIVE_DeleteFull",
                 new { CAR_DR_ID = carDrId });
+
+            if (!string.IsNullOrEmpty(carDrId))
+            {
+                var entityCacheKey = GenerateCacheKey(carDrId);
+                await _cache.RemoveAsync(entityCacheKey);
+
+                // Also invalidate any search results
+                await InvalidateSearchCache();
+            }
         }
 
         public async Task<PaginatedResult<CarDriveSearchResult>> SearchCarDrivesFull(QueryObject queryObject)
         {
+            // Generate cache key based on search parameters
+            var cacheKey = GenerateSearchCacheKey(queryObject);
+
+            // Try get from cache
+            var cached = await _cache.GetStringAsync(cacheKey);
+            if (!string.IsNullOrEmpty(cached))
+            {
+                return JsonSerializer.Deserialize<PaginatedResult<CarDriveSearchResult>>(cached);
+            }
             var jsonParams = JsonSerializer.Serialize(new
             {
                 queryObject.carId,
@@ -118,13 +240,26 @@ namespace CarApp.Repository
                 "sp_CAR_DRIVE_SearchFull",
                 new { SearchParams = jsonParams });
 
-            return new PaginatedResult<CarDriveSearchResult>
+            var paginatedResult = new PaginatedResult<CarDriveSearchResult>
             {
                 Items = result.Second,
                 PageNumber = queryObject.PageNumber,
                 PageSize = queryObject.PageSize,
                 TotalCount = result.First
             };
+
+            // Cache the result
+            await _cache.SetStringAsync(
+                cacheKey,
+                JsonSerializer.Serialize(paginatedResult),
+                new DistributedCacheEntryOptions
+                {
+                    AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5),  // Shorter cache time for search results
+                    SlidingExpiration = TimeSpan.FromMinutes(2)
+                });
+
+            await AddSearchCacheKey(cacheKey);
+            return paginatedResult;
         }
 
         private DataTable CreateDetailTable(List<CarDriveDtList> details)
